@@ -131,21 +131,35 @@ function pageResponse(data) {
           .map((p) => `<p>[${fmtTime(p.s)}] ${esc(p.t)}</p>`)
           .join("") +
         `</div></article>`
-      : `<article id="ssr" class="error">${esc(b.error)}</article>`;
+      : `<article id="ssr" class="error"><p>Error: ${esc(b.error)}</p>` +
+        (b.attempts && b.attempts.length ? `<pre>${esc(b.attempts.join("\n"))}</pre>` : "") +
+        `</article>`;
     const initial = `<script>window.__INITIAL__=${JSON.stringify(b).replace(/</g, "\\u003c").replace(/[\u2028\u2029]/g, "")};</script>`;
     html = html.replace("<!--SSR-->", ssr + initial);
     if (b.ok && b.title) html = html.replace("<title>YouTube Transcript</title>", `<title>${esc(b.title)} · Transcript</title>`);
   }
   return new Response(html, {
-    status: data ? data.status : 200,
-    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },
+    // Always 200 so tools that skip error pages can still read the message
+    status: data && data.status === 400 ? 400 : 200,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-cache",
+      ...(data && !data.body.ok ? { "x-transcript-status": String(data.status) } : {}),
+    },
   });
 }
 
 function textResponse(data, url) {
   const b = data.body;
   const headers = { "content-type": "text/plain; charset=utf-8", ...cors() };
-  if (!b.ok) return new Response(`Error: ${b.error}\n`, { status: data.status, headers });
+  if (!b.ok) {
+    const tried = b.attempts && b.attempts.length ? `\nWhat was tried:\n- ${b.attempts.join("\n- ")}\n` : "";
+    // 200 so tools that skip error pages can still read the message; real status in a header
+    return new Response(`Error: ${b.error}\n${tried}`, {
+      status: data.status === 400 ? 400 : 200,
+      headers: { ...headers, "x-transcript-status": String(data.status), "cache-control": "no-store" },
+    });
+  }
   const ts = url.searchParams.get("ts") !== "0";
   const body =
     `${b.title || b.id}\n${metaLine(b)}\nhttps://youtu.be/${b.id}\n\n` +
